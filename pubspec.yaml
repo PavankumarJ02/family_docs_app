@@ -1,0 +1,46 @@
+name: family_docs_app
+description: "A new Flutter project."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.9.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Database & storage
+  sqflite: ^2.3.0
+  path_provider: ^2.1.2
+  path: ^1.9.0
+
+  # File handling
+  file_selector: ^1.0.3
+  open_filex: ^4.4.0
+
+  # App lock
+  shared_preferences: ^2.2.2
+  local_auth: ^2.2.0
+
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^5.0.0
+  flutter_launcher_icons: ^0.13.1
+
+# App icon configuration (TOP LEVEL)
+flutter_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon.png"
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/icon.png
