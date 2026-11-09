@@ -1,6 +1,6 @@
-import 'dart:io';
-import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
+import 'package:sqflite/sqflite.dart';
+import '../services/document_storage_service.dart';
 
 class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._internal();
@@ -83,15 +83,11 @@ class DatabaseHelper {
       where: 'member_id = ?',
       whereArgs: [id],
     );
+    final storage = DocumentStorageService();
     for (final doc in docs) {
       final path = doc['file_path'] as String?;
       if (path != null) {
-        try {
-          final file = File(path);
-          if (await file.exists()) {
-            await file.delete();
-          }
-        } catch (_) {}
+        await storage.deletePhysicalFile(path);
       }
     }
     // Delete documents, categories and member record
@@ -132,15 +128,11 @@ class DatabaseHelper {
       where: 'category_id = ?',
       whereArgs: [id],
     );
+    final storage = DocumentStorageService();
     for (final doc in docs) {
       final path = doc['file_path'] as String?;
       if (path != null) {
-        try {
-          final file = File(path);
-          if (await file.exists()) {
-            await file.delete();
-          }
-        } catch (_) {}
+        await storage.deletePhysicalFile(path);
       }
     }
     await db.delete('documents', where: 'category_id = ?', whereArgs: [id]);
@@ -179,12 +171,7 @@ class DatabaseHelper {
 
   Future<void> deleteDocument(int id, String filePath) async {
     final db = await database;
-    try {
-      final file = File(filePath);
-      if (await file.exists()) {
-        await file.delete();
-      }
-    } catch (_) {}
+    await DocumentStorageService().deletePhysicalFile(filePath);
     await db.delete('documents', where: 'id = ?', whereArgs: [id]);
   }
 

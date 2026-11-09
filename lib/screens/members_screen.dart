@@ -3,6 +3,7 @@ import 'package:open_filex/open_filex.dart';
 import '../db/database_helper.dart';
 import '../models/document_item.dart';
 import '../models/member.dart';
+import '../services/document_storage_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/app_bottom_nav.dart';
 import '../widgets/document_card.dart';
@@ -384,9 +385,11 @@ class _MembersScreenState extends State<MembersScreen> {
                     child: OutlinedButton.icon(
                       icon: const Icon(Icons.open_in_new_rounded, size: 18),
                       label: const Text("Open File"),
-                      onPressed: () {
+                      onPressed: () async {
                         Navigator.pop(ctx);
-                        OpenFilex.open(doc.filePath);
+                        final resolved = await DocumentStorageService()
+                            .resolveFilePath(doc.filePath);
+                        OpenFilex.open(resolved);
                       },
                     ),
                   ),

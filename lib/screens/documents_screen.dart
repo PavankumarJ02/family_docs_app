@@ -1,11 +1,11 @@
 import 'dart:io';
-import 'package:flutter/material.dart';
 import 'package:file_selector/file_selector.dart';
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
+import 'package:flutter/material.dart';
 import 'package:open_filex/open_filex.dart';
+import 'package:path/path.dart' as p;
 import '../db/database_helper.dart';
 import '../models/document_item.dart';
+import '../services/document_storage_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/document_card.dart';
 import '../widgets/empty_state_view.dart';
@@ -75,24 +75,21 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
 
     final pickedFile = File(file.path);
     final fileName = p.basename(pickedFile.path);
-    final fileSize = await pickedFile.length();
 
-    final dir = await getApplicationDocumentsDirectory();
-    final saveDir = Directory(
-      '${dir.path}/member_${widget.memberId}/category_${widget.categoryId}',
+    final storage = DocumentStorageService();
+    final saved = await storage.saveDocument(
+      sourceFile: pickedFile,
+      memberId: widget.memberId,
+      categoryId: widget.categoryId,
+      originalName: fileName,
     );
-    if (!await saveDir.exists()) {
-      await saveDir.create(recursive: true);
-    }
-
-    final savedFile = await pickedFile.copy('${saveDir.path}/$fileName');
 
     await DatabaseHelper.instance.addDocument({
       'member_id': widget.memberId,
       'category_id': widget.categoryId,
       'file_name': fileName,
-      'file_path': savedFile.path,
-      'size': fileSize,
+      'file_path': saved.relativePath,
+      'size': saved.sizeBytes,
       'created_at': DateTime.now().toIso8601String(),
       'sync_status': 'local_only',
     });
@@ -211,9 +208,11 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
                     child: OutlinedButton.icon(
                       icon: const Icon(Icons.open_in_new_rounded, size: 18),
                       label: const Text("Open"),
-                      onPressed: () {
+                      onPressed: () async {
                         Navigator.pop(ctx);
-                        OpenFilex.open(doc.filePath);
+                        final resolved = await DocumentStorageService()
+                            .resolveFilePath(doc.filePath);
+                        OpenFilex.open(resolved);
                       },
                     ),
                   ),
