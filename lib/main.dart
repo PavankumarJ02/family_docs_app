@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'screens/members_screen.dart';
 import 'screens/system_lock_screen.dart';
+import 'theme/app_theme.dart';
 
 void main() {
-  runApp(const FamilyDocsApp());
+  runApp(const ProviderScope(child: FamilyDocsApp()));
 }
 
 class FamilyDocsApp extends StatelessWidget {
@@ -14,9 +16,9 @@ class FamilyDocsApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Family Documents',
-      theme: ThemeData(primarySwatch: Colors.blue),
-      home: SystemLockScreen(nextScreen: const MembersScreen()),
+      title: 'Family Docs',
+      theme: AppTheme.lightTheme,
+      home: const SystemLockScreen(nextScreen: MembersScreen()),
     );
   }
 }
