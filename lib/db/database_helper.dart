@@ -1,5 +1,6 @@
-import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
+import 'package:sqflite/sqflite.dart';
+import '../services/document_storage_service.dart';
 
 class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._internal();
@@ -74,6 +75,27 @@ class DatabaseHelper {
     );
   }
 
+  Future<void> deleteMember(int id) async {
+    final db = await database;
+    // Find documents belonging to member to remove physical files
+    final docs = await db.query(
+      'documents',
+      where: 'member_id = ?',
+      whereArgs: [id],
+    );
+    final storage = DocumentStorageService();
+    for (final doc in docs) {
+      final path = doc['file_path'] as String?;
+      if (path != null) {
+        await storage.deletePhysicalFile(path);
+      }
+    }
+    // Delete documents, categories and member record
+    await db.delete('documents', where: 'member_id = ?', whereArgs: [id]);
+    await db.delete('categories', where: 'member_id = ?', whereArgs: [id]);
+    await db.delete('members', where: 'id = ?', whereArgs: [id]);
+  }
+
   // ---------- CATEGORY ----------
   Future<int> addCategory(int memberId, String name) async {
     final db = await database;
@@ -99,10 +121,42 @@ class DatabaseHelper {
     );
   }
 
+  Future<void> deleteCategory(int id) async {
+    final db = await database;
+    final docs = await db.query(
+      'documents',
+      where: 'category_id = ?',
+      whereArgs: [id],
+    );
+    final storage = DocumentStorageService();
+    for (final doc in docs) {
+      final path = doc['file_path'] as String?;
+      if (path != null) {
+        await storage.deletePhysicalFile(path);
+      }
+    }
+    await db.delete('documents', where: 'category_id = ?', whereArgs: [id]);
+    await db.delete('categories', where: 'id = ?', whereArgs: [id]);
+  }
+
   // ---------- DOCUMENT ----------
   Future<int> addDocument(Map<String, dynamic> data) async {
     final db = await database;
     return await db.insert('documents', data);
+  }
+
+  Future<List<Map<String, dynamic>>> getAllDocuments() async {
+    final db = await database;
+    return await db.query('documents', orderBy: 'created_at DESC');
+  }
+
+  Future<List<Map<String, dynamic>>> getRecentDocuments({int limit = 5}) async {
+    final db = await database;
+    return await db.query(
+      'documents',
+      orderBy: 'created_at DESC',
+      limit: limit,
+    );
   }
 
   Future<List<Map<String, dynamic>>> searchDocuments(String query) async {
@@ -111,6 +165,50 @@ class DatabaseHelper {
       'documents',
       where: 'file_name LIKE ?',
       whereArgs: ['%$query%'],
+      orderBy: 'created_at DESC',
     );
+  }
+
+  Future<void> deleteDocument(int id, String filePath) async {
+    final db = await database;
+    await DocumentStorageService().deletePhysicalFile(filePath);
+    await db.delete('documents', where: 'id = ?', whereArgs: [id]);
+  }
+
+  // ---------- METRICS & COUNTS ----------
+  Future<int> getMemberDocumentCount(int memberId) async {
+    final db = await database;
+    final result = await db.rawQuery(
+      'SELECT COUNT(*) as count FROM documents WHERE member_id = ?',
+      [memberId],
+    );
+    return Sqflite.firstIntValue(result) ?? 0;
+  }
+
+  Future<int> getCategoryDocumentCount(int categoryId) async {
+    final db = await database;
+    final result = await db.rawQuery(
+      'SELECT COUNT(*) as count FROM documents WHERE category_id = ?',
+      [categoryId],
+    );
+    return Sqflite.firstIntValue(result) ?? 0;
+  }
+
+  Future<int> getTotalDocumentCount() async {
+    final db = await database;
+    final result = await db.rawQuery('SELECT COUNT(*) as count FROM documents');
+    return Sqflite.firstIntValue(result) ?? 0;
+  }
+
+  Future<int> getTotalStorageBytes() async {
+    final db = await database;
+    final result = await db.rawQuery(
+      'SELECT SUM(size) as total FROM documents',
+    );
+    final val = result.first['total'];
+    if (val == null) return 0;
+    if (val is int) return val;
+    if (val is num) return val.toInt();
+    return 0;
   }
 }
