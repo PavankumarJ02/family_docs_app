@@ -1,194 +1,217 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../providers/vault_providers.dart';
+import '../db/database_helper.dart';
+import '../models/document_item.dart';
 import '../theme/app_colors.dart';
 import '../widgets/empty_state_view.dart';
+import 'document_viewer_screen.dart';
+import 'ocr_review_sheet.dart';
 
-class RemindersScreen extends ConsumerWidget {
+class RemindersScreen extends StatefulWidget {
   const RemindersScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final docsAsync = ref.watch(recentDocumentsProvider);
+  State<RemindersScreen> createState() => _RemindersScreenState();
+}
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text("Expiry & Reminders"),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add_alert_rounded),
-            tooltip: "Add Custom Reminder",
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text(
-                    "Custom document expiry reminders will be configurable in Phase 2.",
-                  ),
-                ),
-              );
-            },
-          ),
-        ],
+class _RemindersScreenState extends State<RemindersScreen> {
+  List<DocumentItem> _expiryDocs = [];
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadExpiryDocuments();
+  }
+
+  Future<void> _loadExpiryDocuments() async {
+    setState(() => _isLoading = true);
+    final rows = await DatabaseHelper.instance.getDocumentsWithExpiry();
+    if (!mounted) return;
+    setState(() {
+      _expiryDocs = rows.map((m) => DocumentItem.fromMap(m)).toList();
+      _isLoading = false;
+    });
+  }
+
+  void _openDoc(DocumentItem doc) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => DocumentViewerScreen(
+          document: doc,
+          onAnalyzeDocument: (d, path) =>
+              OcrReviewSheet.show(context, document: d, resolvedFilePath: path),
+        ),
       ),
-      body: docsAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (err, _) => Center(child: Text("Error: $err")),
-        data: (documents) {
-          return ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              // Hero Advisory Card
-              Container(
+    ).then((_) => _loadExpiryDocuments());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Expiry & Reminders')),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : RefreshIndicator(
+              onRefresh: _loadExpiryDocuments,
+              child: ListView(
                 padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: AppColors.warningAmberSubtle,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                    color: AppColors.warningAmber.withValues(alpha: 0.3),
-                    width: 1,
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: AppColors.warningAmber.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: const Icon(
-                        Icons.access_time_rounded,
-                        color: AppColors.warningAmber,
-                        size: 24,
-                      ),
-                    ),
-                    const SizedBox(width: 14),
-                    const Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            "Automated Expiry Tracking",
-                            style: TextStyle(
-                              color: AppColors.enclavePrimary,
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          SizedBox(height: 3),
-                          Text(
-                            "Local OCR date extraction will auto-populate expiry alerts for Passports, IDs & Policies.",
-                            style: TextStyle(
-                              color: AppColors.textMuted,
-                              fontSize: 12.5,
-                              height: 1.3,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 24),
-
-              const Text(
-                "Tracked Vault Documents",
-                style: TextStyle(
-                  color: AppColors.enclavePrimary,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: -0.2,
-                ),
-              ),
-              const SizedBox(height: 12),
-
-              if (documents.isEmpty)
-                const EmptyStateView(
-                  icon: Icons.notifications_none_rounded,
-                  title: "No Expiry Reminders Yet",
-                  description:
-                      "Upload documents like Passports, Insurance, or Driving Licenses to track renewal schedules.",
-                )
-              else
-                ...documents.map((doc) {
-                  return Container(
-                    margin: const EdgeInsets.only(bottom: 10),
-                    padding: const EdgeInsets.all(14),
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
-                      color: AppColors.cardSurface,
+                      color: AppColors.securityIndigoSubtle,
                       borderRadius: BorderRadius.circular(16),
                       border: Border.all(
-                        color: AppColors.surfaceBorder,
-                        width: 1,
+                        color: AppColors.securityIndigo.withValues(alpha: 0.25),
                       ),
                     ),
-                    child: Row(
+                    child: const Row(
                       children: [
-                        Container(
-                          width: 40,
-                          height: 40,
-                          decoration: BoxDecoration(
-                            color: AppColors.surfaceMuted,
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: const Icon(
-                            Icons.calendar_today_rounded,
-                            size: 20,
-                            color: AppColors.textMuted,
-                          ),
+                        Icon(
+                          Icons.notifications_active_outlined,
+                          color: AppColors.securityIndigo,
+                          size: 26,
                         ),
-                        const SizedBox(width: 12),
+                        SizedBox(width: 14),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                doc.fileName,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
+                                'Confirmed Expiry Reminders',
+                                style: TextStyle(
                                   color: AppColors.enclavePrimary,
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w700,
                                 ),
                               ),
-                              const SizedBox(height: 3),
+                              SizedBox(height: 3),
                               Text(
-                                "Added ${doc.formattedDate} • ${doc.formattedSize}",
-                                style: const TextStyle(
+                                'Open any document and run On-Device OCR to detect and confirm renewal dates (30d, 7d, 1d alerts).',
+                                style: TextStyle(
                                   color: AppColors.textMuted,
-                                  fontSize: 12,
+                                  fontSize: 12.5,
+                                  height: 1.3,
                                 ),
                               ),
                             ],
                           ),
                         ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: AppColors.surfaceMuted,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: const Text(
-                            "Monitored",
-                            style: TextStyle(
-                              color: AppColors.textMuted,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
                       ],
                     ),
-                  );
-                }),
-            ],
-          );
-        },
+                  ),
+                  const SizedBox(height: 20),
+                  if (_expiryDocs.isEmpty)
+                    const EmptyStateView(
+                      icon: Icons.event_available_rounded,
+                      title: 'No Confirmed Expiry Dates',
+                      description:
+                          'Open a Passport, Driving Licence, or Insurance document and run On-Device OCR to confirm its expiry date.',
+                    )
+                  else
+                    ..._expiryDocs.map(_buildExpiryTile),
+                ],
+              ),
+            ),
+    );
+  }
+
+  Widget _buildExpiryTile(DocumentItem doc) {
+    final days = doc.daysUntilExpiry;
+    final isExpired = doc.isExpired;
+    final isSoon = doc.isExpiringSoon;
+
+    final Color badgeBg = isExpired
+        ? AppColors.alertRoseSubtle
+        : isSoon
+        ? AppColors.warningAmberSubtle
+        : AppColors.trustEmeraldSubtle;
+    final Color badgeFg = isExpired
+        ? AppColors.alertRose
+        : isSoon
+        ? AppColors.warningAmber
+        : AppColors.trustEmerald;
+
+    final String statusText = days == null
+        ? 'No Date'
+        : isExpired
+        ? 'Expired ${-days}d ago'
+        : days == 0
+        ? 'Expires Today'
+        : '$days days left';
+
+    return InkWell(
+      onTap: () => _openDoc(doc),
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: AppColors.cardSurface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppColors.surfaceBorder),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                color: badgeBg,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(
+                isExpired
+                    ? Icons.warning_amber_rounded
+                    : Icons.calendar_today_rounded,
+                size: 20,
+                color: badgeFg,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    doc.fileName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: AppColors.enclavePrimary,
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    '${doc.docType ?? 'Document'} • Expires ${doc.expiryDate ?? ''}',
+                    style: const TextStyle(
+                      color: AppColors.textMuted,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+              decoration: BoxDecoration(
+                color: badgeBg,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                statusText,
+                style: TextStyle(
+                  color: badgeFg,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

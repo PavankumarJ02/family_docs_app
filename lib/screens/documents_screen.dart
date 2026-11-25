@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
-import 'package:open_filex/open_filex.dart';
 import 'package:path/path.dart' as p;
 import '../db/database_helper.dart';
 import '../models/document_item.dart';
@@ -9,6 +8,9 @@ import '../services/document_storage_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/document_card.dart';
 import '../widgets/empty_state_view.dart';
+import 'document_viewer_screen.dart';
+import 'ocr_review_sheet.dart';
+import 'scanner_screen.dart';
 
 class DocumentsScreen extends StatefulWidget {
   final int memberId;
@@ -73,28 +75,88 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
     final file = await openFile(acceptedTypeGroups: [typeGroup]);
     if (file == null) return;
 
-    final pickedFile = File(file.path);
-    final fileName = p.basename(pickedFile.path);
+    try {
+      final pickedFile = File(file.path);
+      final fileName = p.basename(pickedFile.path);
 
-    final storage = DocumentStorageService();
-    final saved = await storage.saveDocument(
-      sourceFile: pickedFile,
-      memberId: widget.memberId,
-      categoryId: widget.categoryId,
-      originalName: fileName,
+      final storage = DocumentStorageService();
+      final saved = await storage.saveDocument(
+        sourceFile: pickedFile,
+        memberId: widget.memberId,
+        categoryId: widget.categoryId,
+        originalName: fileName,
+      );
+
+      final docId = await DatabaseHelper.instance.addDocument({
+        'uuid': saved.uuid,
+        'member_id': widget.memberId,
+        'category_id': widget.categoryId,
+        'file_name': fileName,
+        'file_path': saved.relativePath,
+        'size': saved.sizeBytes,
+        'created_at': DateTime.now().toIso8601String(),
+        'sync_status': 'local_only',
+        'ocr_status': 'pending',
+      });
+
+      await loadDocuments();
+      if (!mounted) return;
+      final row = await DatabaseHelper.instance.getDocumentById(docId);
+      if (row != null && mounted) {
+        final created = DocumentItem.fromMap(row);
+        await OcrReviewSheet.show(
+          context,
+          document: created,
+          resolvedFilePath: saved.fullPath,
+        );
+        loadDocuments();
+      }
+    } on DocumentImportException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.message)));
+    }
+  }
+
+  Future<void> _openScanner() async {
+    final created = await Navigator.push<DocumentItem?>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ScannerScreen(
+          memberId: widget.memberId,
+          categoryId: widget.categoryId,
+          categoryName: widget.categoryName,
+        ),
+      ),
     );
+    await loadDocuments();
+    if (created != null && mounted) {
+      final resolved = await DocumentStorageService().resolveFilePath(
+        created.filePath,
+      );
+      if (!mounted) return;
+      await OcrReviewSheet.show(
+        context,
+        document: created,
+        resolvedFilePath: resolved,
+      );
+      loadDocuments();
+    }
+  }
 
-    await DatabaseHelper.instance.addDocument({
-      'member_id': widget.memberId,
-      'category_id': widget.categoryId,
-      'file_name': fileName,
-      'file_path': saved.relativePath,
-      'size': saved.sizeBytes,
-      'created_at': DateTime.now().toIso8601String(),
-      'sync_status': 'local_only',
-    });
-
-    loadDocuments();
+  void _openInAppViewer(DocumentItem doc) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => DocumentViewerScreen(
+          document: doc,
+          categoryName: widget.categoryName,
+          onAnalyzeDocument: (d, path) =>
+              OcrReviewSheet.show(context, document: d, resolvedFilePath: path),
+        ),
+      ),
+    ).then((_) => loadDocuments());
   }
 
   void showDocumentDetailsModal(DocumentItem doc) {
@@ -208,11 +270,9 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
                     child: OutlinedButton.icon(
                       icon: const Icon(Icons.open_in_new_rounded, size: 18),
                       label: const Text("Open"),
-                      onPressed: () async {
+                      onPressed: () {
                         Navigator.pop(ctx);
-                        final resolved = await DocumentStorageService()
-                            .resolveFilePath(doc.filePath);
-                        OpenFilex.open(resolved);
+                        _openInAppViewer(doc);
                       },
                     ),
                   ),
@@ -285,6 +345,11 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
         title: Text(widget.categoryName),
         actions: [
           IconButton(
+            icon: const Icon(Icons.document_scanner_outlined),
+            tooltip: "Scan Document",
+            onPressed: _openScanner,
+          ),
+          IconButton(
             icon: const Icon(Icons.upload_file_rounded),
             tooltip: "Import Document",
             onPressed: pickAndSaveDocument,
@@ -330,9 +395,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
                     ...docs.map((doc) {
                       return DocumentCard(
                         document: doc,
-                        onTap: () {
-                          OpenFilex.open(doc.filePath);
-                        },
+                        onTap: () => _openInAppViewer(doc),
                         onLongPress: () {
                           showDocumentDetailsModal(doc);
                         },
@@ -341,12 +404,28 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
                 ],
               ),
             ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: pickAndSaveDocument,
-        backgroundColor: AppColors.enclavePrimary,
-        foregroundColor: Colors.white,
-        icon: const Icon(Icons.add_rounded),
-        label: const Text("Import Document"),
+      floatingActionButton: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          FloatingActionButton.small(
+            heroTag: 'scan_fab',
+            onPressed: _openScanner,
+            backgroundColor: AppColors.securityIndigo,
+            foregroundColor: Colors.white,
+            tooltip: 'Scan Document',
+            child: const Icon(Icons.document_scanner_rounded),
+          ),
+          const SizedBox(height: 10),
+          FloatingActionButton.extended(
+            heroTag: 'import_fab',
+            onPressed: pickAndSaveDocument,
+            backgroundColor: AppColors.enclavePrimary,
+            foregroundColor: Colors.white,
+            icon: const Icon(Icons.add_rounded),
+            label: const Text("Import Document"),
+          ),
+        ],
       ),
     );
   }

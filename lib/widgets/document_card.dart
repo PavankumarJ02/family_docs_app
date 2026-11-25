@@ -117,32 +117,7 @@ class DocumentCard extends StatelessWidget {
             ),
 
             // Right Status Badge & Options
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: AppColors.trustEmeraldSubtle,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.lock_outline_rounded,
-                    color: AppColors.trustEmerald,
-                    size: 11,
-                  ),
-                  SizedBox(width: 4),
-                  Text(
-                    "Encrypted",
-                    style: TextStyle(
-                      color: Color(0xFF065F46),
-                      fontSize: 10.5,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
+            _buildStatusBadge(),
             const SizedBox(width: 4),
 
             // Options Overflow Button
@@ -159,6 +134,53 @@ class DocumentCard extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildStatusBadge() {
+    Color bg = AppColors.surfaceMuted;
+    Color fg = AppColors.textMuted;
+    String label = 'Local';
+    IconData icon = Icons.folder_outlined;
+
+    if (document.isExpired) {
+      bg = AppColors.alertRoseSubtle;
+      fg = AppColors.alertRose;
+      label = 'Expired';
+      icon = Icons.warning_amber_rounded;
+    } else if (document.isExpiringSoon) {
+      bg = AppColors.warningAmberSubtle;
+      fg = AppColors.warningAmber;
+      label = 'Expiring';
+      icon = Icons.schedule_rounded;
+    } else if (document.docType != null && document.docType!.isNotEmpty) {
+      bg = AppColors.securityIndigoSubtle;
+      fg = AppColors.securityIndigo;
+      label = document.docType!;
+      icon = Icons.verified_outlined;
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: fg, size: 11),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+              color: fg,
+              fontSize: 10.5,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
       ),
     );
   }

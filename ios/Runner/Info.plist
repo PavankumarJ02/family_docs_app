@@ -47,6 +47,10 @@
 	<true/>
 	<key>NSFaceIDUsageDescription</key>
     <string>Use Face ID to unlock family documents</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Use the camera to scan family documents securely on-device</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Select document images from your photo library to store in your vault</string>
 
 </dict>
 </plist>

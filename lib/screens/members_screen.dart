@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:open_filex/open_filex.dart';
 import '../db/database_helper.dart';
 import '../models/document_item.dart';
 import '../models/member.dart';
-import '../services/document_storage_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/app_bottom_nav.dart';
 import '../widgets/document_card.dart';
@@ -11,6 +9,8 @@ import '../widgets/empty_state_view.dart';
 import '../widgets/family_member_avatar.dart';
 import '../widgets/vault_hero_card.dart';
 import 'categories_screen.dart';
+import 'document_viewer_screen.dart';
+import 'ocr_review_sheet.dart';
 import 'reminders_screen.dart';
 import 'search_screen.dart';
 import 'settings_screen.dart';
@@ -62,6 +62,19 @@ class _MembersScreenState extends State<MembersScreen> {
       _totalStorageBytes = totalBytes;
       _isLoading = false;
     });
+  }
+
+  void _openInAppViewer(DocumentItem doc) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => DocumentViewerScreen(
+          document: doc,
+          onAnalyzeDocument: (d, path) =>
+              OcrReviewSheet.show(context, document: d, resolvedFilePath: path),
+        ),
+      ),
+    ).then((_) => loadDashboardData());
   }
 
   String _formatStorage(int bytes) {
@@ -385,11 +398,9 @@ class _MembersScreenState extends State<MembersScreen> {
                     child: OutlinedButton.icon(
                       icon: const Icon(Icons.open_in_new_rounded, size: 18),
                       label: const Text("Open File"),
-                      onPressed: () async {
+                      onPressed: () {
                         Navigator.pop(ctx);
-                        final resolved = await DocumentStorageService()
-                            .resolveFilePath(doc.filePath);
-                        OpenFilex.open(resolved);
+                        _openInAppViewer(doc);
                       },
                     ),
                   ),
@@ -706,9 +717,7 @@ class _MembersScreenState extends State<MembersScreen> {
                     ..._recentDocs.map((doc) {
                       return DocumentCard(
                         document: doc,
-                        onTap: () {
-                          OpenFilex.open(doc.filePath);
-                        },
+                        onTap: () => _openInAppViewer(doc),
                         onLongPress: () {
                           showDocumentMetadataSheet(doc);
                         },

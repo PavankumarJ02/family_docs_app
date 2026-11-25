@@ -100,13 +100,13 @@ void main() {
         expect(File(resB.fullPath).existsSync(), isTrue);
         expect(
           resA.relativePath.startsWith(
-            p.join('docs', 'member_2', 'category_5'),
+            p.posix.join('docs', 'member_2', 'category_5'),
           ),
           isTrue,
         );
         expect(
           resB.relativePath.startsWith(
-            p.join('docs', 'member_2', 'category_5'),
+            p.posix.join('docs', 'member_2', 'category_5'),
           ),
           isTrue,
         );

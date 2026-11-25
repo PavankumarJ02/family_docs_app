@@ -1,57 +1,180 @@
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
+import 'package:uuid/uuid.dart';
 import '../services/document_storage_service.dart';
 
 class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._internal();
   static Database? _database;
+  static String? _overrideDbPath;
 
-  DatabaseHelper._internal();
+  final DocumentStorageService _storage;
+
+  DatabaseHelper._internal({DocumentStorageService? storage})
+    : _storage = storage ?? DocumentStorageService();
+
+  /// Allows unit tests to use an isolated database path or in-memory DB.
+  static Future<void> configureForTesting(String? dbPath) async {
+    if (_database != null && _database!.isOpen) {
+      await _database!.close();
+    }
+    _database = null;
+    _overrideDbPath = dbPath;
+  }
 
   Future<Database> get database async {
-    if (_database != null) return _database!;
+    if (_database != null && _database!.isOpen) return _database!;
     _database = await _initDB();
     return _database!;
   }
 
   Future<Database> _initDB() async {
-    final dbPath = await getDatabasesPath();
+    final path =
+        _overrideDbPath ?? join(await getDatabasesPath(), 'family_docs.db');
     return await openDatabase(
-      join(dbPath, 'family_docs.db'),
-      version: 1,
-      onCreate: (db, version) async {
-        // Members
-        await db.execute('''
-          CREATE TABLE members (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL
-          )
-        ''');
-
-        // Categories
-        await db.execute('''
-          CREATE TABLE categories (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            member_id INTEGER,
-            name TEXT
-          )
-        ''');
-
-        // Documents
-        await db.execute('''
-          CREATE TABLE documents (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            member_id INTEGER,
-            category_id INTEGER,
-            file_name TEXT,
-            file_path TEXT,
-            size INTEGER,
-            created_at TEXT,
-            sync_status TEXT
-          )
-        ''');
-      },
+      path,
+      version: 2,
+      onCreate: _onCreate,
+      onUpgrade: _onUpgrade,
     );
+  }
+
+  Future<void> _onCreate(Database db, int version) async {
+    await db.execute('''
+      CREATE TABLE members (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE categories (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        member_id INTEGER,
+        name TEXT
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE documents (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        uuid TEXT,
+        member_id INTEGER,
+        category_id INTEGER,
+        file_name TEXT,
+        file_path TEXT,
+        size INTEGER,
+        created_at TEXT,
+        sync_status TEXT,
+        doc_type TEXT,
+        masked_id TEXT,
+        issue_date TEXT,
+        expiry_date TEXT,
+        expiry_confirmed INTEGER DEFAULT 0,
+        ocr_status TEXT DEFAULT 'pending',
+        notes TEXT
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE reminders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        document_id INTEGER NOT NULL,
+        notification_id INTEGER NOT NULL,
+        reminder_date TEXT NOT NULL,
+        reminder_type TEXT NOT NULL,
+        is_active INTEGER DEFAULT 1,
+        created_at TEXT NOT NULL
+      )
+    ''');
+
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_docs_member_cat ON documents (member_id, category_id)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_docs_type ON documents (doc_type)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_docs_expiry ON documents (expiry_date)',
+    );
+  }
+
+  /// Backward-compatible, non-destructive migration from v1 to v2.
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      final columns = await db.rawQuery('PRAGMA table_info(documents)');
+      final existingCols = columns.map((c) => c['name'] as String).toSet();
+
+      final additions = <String, String>{
+        'uuid': 'TEXT',
+        'doc_type': 'TEXT',
+        'masked_id': 'TEXT',
+        'issue_date': 'TEXT',
+        'expiry_date': 'TEXT',
+        'expiry_confirmed': 'INTEGER DEFAULT 0',
+        'ocr_status': "TEXT DEFAULT 'pending'",
+        'notes': 'TEXT',
+      };
+
+      for (final entry in additions.entries) {
+        if (!existingCols.contains(entry.key)) {
+          await db.execute(
+            'ALTER TABLE documents ADD COLUMN ${entry.key} ${entry.value}',
+          );
+        }
+      }
+
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS reminders (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          document_id INTEGER NOT NULL,
+          notification_id INTEGER NOT NULL,
+          reminder_date TEXT NOT NULL,
+          reminder_type TEXT NOT NULL,
+          is_active INTEGER DEFAULT 1,
+          created_at TEXT NOT NULL
+        )
+      ''');
+
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_docs_member_cat ON documents (member_id, category_id)',
+      );
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_docs_type ON documents (doc_type)',
+      );
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_docs_expiry ON documents (expiry_date)',
+      );
+
+      // Non-destructively convert legacy absolute paths to relative subpaths
+      // and backfill UUIDs without touching physical files on disk.
+      final docs = await db.query('documents');
+      const uuidGen = Uuid();
+      for (final doc in docs) {
+        final id = doc['id'] as int;
+        final existingUuid = doc['uuid'] as String?;
+        final rawPath = doc['file_path'] as String? ?? '';
+        final relativePath = DocumentStorageService.extractRelativeSubpath(
+          rawPath,
+        );
+
+        final updates = <String, dynamic>{};
+        if (existingUuid == null || existingUuid.isEmpty) {
+          updates['uuid'] = uuidGen.v4();
+        }
+        if (relativePath != null && relativePath != rawPath) {
+          updates['file_path'] = relativePath;
+        }
+        if (updates.isNotEmpty) {
+          await db.update(
+            'documents',
+            updates,
+            where: 'id = ?',
+            whereArgs: [id],
+          );
+        }
+      }
+    }
   }
 
   // ---------- MEMBER ----------
@@ -77,20 +200,23 @@ class DatabaseHelper {
 
   Future<void> deleteMember(int id) async {
     final db = await database;
-    // Find documents belonging to member to remove physical files
     final docs = await db.query(
       'documents',
       where: 'member_id = ?',
       whereArgs: [id],
     );
-    final storage = DocumentStorageService();
     for (final doc in docs) {
+      final docId = doc['id'] as int;
       final path = doc['file_path'] as String?;
       if (path != null) {
-        await storage.deletePhysicalFile(path);
+        await _storage.deletePhysicalFile(path);
       }
+      await db.delete(
+        'reminders',
+        where: 'document_id = ?',
+        whereArgs: [docId],
+      );
     }
-    // Delete documents, categories and member record
     await db.delete('documents', where: 'member_id = ?', whereArgs: [id]);
     await db.delete('categories', where: 'member_id = ?', whereArgs: [id]);
     await db.delete('members', where: 'id = ?', whereArgs: [id]);
@@ -111,6 +237,11 @@ class DatabaseHelper {
     );
   }
 
+  Future<List<Map<String, dynamic>>> getAllCategories() async {
+    final db = await database;
+    return await db.query('categories');
+  }
+
   Future<void> renameCategory(int id, String newName) async {
     final db = await database;
     await db.update(
@@ -128,12 +259,17 @@ class DatabaseHelper {
       where: 'category_id = ?',
       whereArgs: [id],
     );
-    final storage = DocumentStorageService();
     for (final doc in docs) {
+      final docId = doc['id'] as int;
       final path = doc['file_path'] as String?;
       if (path != null) {
-        await storage.deletePhysicalFile(path);
+        await _storage.deletePhysicalFile(path);
       }
+      await db.delete(
+        'reminders',
+        where: 'document_id = ?',
+        whereArgs: [docId],
+      );
     }
     await db.delete('documents', where: 'category_id = ?', whereArgs: [id]);
     await db.delete('categories', where: 'id = ?', whereArgs: [id]);
@@ -142,7 +278,23 @@ class DatabaseHelper {
   // ---------- DOCUMENT ----------
   Future<int> addDocument(Map<String, dynamic> data) async {
     final db = await database;
-    return await db.insert('documents', data);
+    final payload = Map<String, dynamic>.from(data);
+    payload['uuid'] ??= const Uuid().v4();
+    return await db.insert('documents', payload);
+  }
+
+  Future<Map<String, dynamic>?> getDocumentById(int id) async {
+    final db = await database;
+    final res = await db.query('documents', where: 'id = ?', whereArgs: [id]);
+    return res.isEmpty ? null : res.first;
+  }
+
+  Future<void> updateDocumentMetadata(
+    int id,
+    Map<String, dynamic> updates,
+  ) async {
+    final db = await database;
+    await db.update('documents', updates, where: 'id = ?', whereArgs: [id]);
   }
 
   Future<List<Map<String, dynamic>>> getAllDocuments() async {
@@ -159,20 +311,107 @@ class DatabaseHelper {
     );
   }
 
-  Future<List<Map<String, dynamic>>> searchDocuments(String query) async {
+  Future<List<Map<String, dynamic>>> getDocumentsWithExpiry() async {
     final db = await database;
     return await db.query(
       'documents',
-      where: 'file_name LIKE ?',
-      whereArgs: ['%$query%'],
+      where: 'expiry_date IS NOT NULL AND expiry_date != ""',
+      orderBy: 'expiry_date ASC',
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> searchDocuments(
+    String query, {
+    int? memberId,
+    int? categoryId,
+    String? docType,
+    String? fileType, // 'pdf' | 'image'
+    bool onlyWithExpiry = false,
+  }) async {
+    final db = await database;
+    final whereClauses = <String>[];
+    final args = <Object?>[];
+
+    final trimmed = query.trim();
+    if (trimmed.isNotEmpty) {
+      whereClauses.add('(file_name LIKE ? OR doc_type LIKE ? OR notes LIKE ?)');
+      args.addAll(['%$trimmed%', '%$trimmed%', '%$trimmed%']);
+    }
+    if (memberId != null) {
+      whereClauses.add('member_id = ?');
+      args.add(memberId);
+    }
+    if (categoryId != null) {
+      whereClauses.add('category_id = ?');
+      args.add(categoryId);
+    }
+    if (docType != null && docType.isNotEmpty) {
+      whereClauses.add('doc_type = ?');
+      args.add(docType);
+    }
+    if (fileType == 'pdf') {
+      whereClauses.add("LOWER(file_name) LIKE '%.pdf'");
+    } else if (fileType == 'image') {
+      whereClauses.add(
+        "(LOWER(file_name) LIKE '%.jpg' OR LOWER(file_name) LIKE '%.jpeg' OR LOWER(file_name) LIKE '%.png' OR LOWER(file_name) LIKE '%.webp')",
+      );
+    }
+    if (onlyWithExpiry) {
+      whereClauses.add('expiry_date IS NOT NULL AND expiry_date != ""');
+    }
+
+    return await db.query(
+      'documents',
+      where: whereClauses.isEmpty ? null : whereClauses.join(' AND '),
+      whereArgs: args.isEmpty ? null : args,
       orderBy: 'created_at DESC',
     );
   }
 
   Future<void> deleteDocument(int id, String filePath) async {
     final db = await database;
-    await DocumentStorageService().deletePhysicalFile(filePath);
+    await _storage.deletePhysicalFile(filePath);
+    await db.delete('reminders', where: 'document_id = ?', whereArgs: [id]);
     await db.delete('documents', where: 'id = ?', whereArgs: [id]);
+  }
+
+  // ---------- REMINDERS ----------
+  Future<int> addReminder({
+    required int documentId,
+    required int notificationId,
+    required String reminderDate,
+    required String reminderType,
+  }) async {
+    final db = await database;
+    return await db.insert('reminders', {
+      'document_id': documentId,
+      'notification_id': notificationId,
+      'reminder_date': reminderDate,
+      'reminder_type': reminderType,
+      'is_active': 1,
+      'created_at': DateTime.now().toIso8601String(),
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> getRemindersForDocument(
+    int documentId,
+  ) async {
+    final db = await database;
+    return await db.query(
+      'reminders',
+      where: 'document_id = ? AND is_active = 1',
+      whereArgs: [documentId],
+      orderBy: 'reminder_date ASC',
+    );
+  }
+
+  Future<void> deactivateRemindersForDocument(int documentId) async {
+    final db = await database;
+    await db.delete(
+      'reminders',
+      where: 'document_id = ?',
+      whereArgs: [documentId],
+    );
   }
 
   // ---------- METRICS & COUNTS ----------
